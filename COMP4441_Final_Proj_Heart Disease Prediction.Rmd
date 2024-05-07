@@ -1,6 +1,6 @@
 ---
 title: "Final Project : Heart Disease Prediction using Logistic Regression Algorithm"
-author: "Kapil Desai, Sanjay Rao"
+author: "Sanjay Rao"
 output:
   word_document: default
   pdf_document: default
