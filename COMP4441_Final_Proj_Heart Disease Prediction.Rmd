@@ -1,0 +1,214 @@
+---
+title: "Final Project : Heart Disease Prediction using Logistic Regression Algorithm"
+author: "Kapil Desai, Sanjay Rao"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=FALSE)
+library(ggplot2)
+library(dplyr)
+library(rsample)
+library(tidyverse)
+library(pROC)
+library(gridExtra)
+library(caTools)
+library(tidymodels)
+library(ggpubr)
+```
+
+
+```{r}
+# Reading data file
+data <- read.csv("processed.cleveland.data", header = FALSE)
+```
+
+
+```{r}
+# Adding relevant column names
+col_name = c("age", "sex", "chest_pain_type", "resting_blood_pressure", "serum_cholesterol", "fasting_blood_sugar", "restecg", "max_hr_exe", "exercise_angina", "oldpeak", "slope", "ca", "thal", "heart_disease")
+colnames(data) <- col_name
+```
+
+
+```{r}
+# Selecting 8-independent variables (Demographics / Risk Factors) to verify correlation between them
+cor_data <- data %>%
+  select(age, sex, chest_pain_type, resting_blood_pressure, serum_cholesterol, fasting_blood_sugar, max_hr_exe, exercise_angina)
+
+# Finding independent variables (predictors) with correlation < 0.7 (for considering the same in further analysis)
+corr_matrix <- cor(cor_data)
+print(corr_matrix)
+
+cor_threshold <- 0.7
+low_cor_variables <- colnames(corr_matrix)[apply(corr_matrix, 2, function(x) sum(abs(x) < cor_threshold) >= 2)]
+print(low_cor_variables)
+```
+
+```{r}
+# Verifying various independent variables normality 
+ggqqplot(data = data$age, title = "Normal QQ Plot of Age")
+ggqqplot(data = data$resting_blood_pressure, title = "Normal QQ Plot of Resting Blood Pressure")
+ggqqplot(data = data$serum_cholesterol, title = "Normal QQ Plot of Serum Cholesterol")
+ggqqplot(data = data$max_hr_exe, title = "Normal QQ Plot of Maximum Heart Rate during Exercise")
+```
+
+
+```{r}
+# Converting data in to factors (for further analysis)
+# Selecting "8-independent variables & 1-dependent variable" columns for further analysis
+data <- data %>%
+  mutate(sex = case_when(sex == 0 ~ "female", sex == 1 ~ "male"),
+         chest_pain_type = case_when(chest_pain_type == 1 ~ "typical angina", chest_pain_type == 2 ~ "atypical angina", chest_pain_type == 3 ~ "non-anginal pain", chest_pain_type == 4 ~ "asymptomatic"),
+         fasting_blood_sugar = case_when(fasting_blood_sugar == 1 ~ "high", fasting_blood_sugar == 0 ~ "low"), 
+         exercise_angina = case_when(exercise_angina == 0 ~ "no", exercise_angina == 1 ~ "yes"),
+         heart_disease = case_when(heart_disease == 0 ~ "Absence", TRUE ~ "Presence")) %>%
+  mutate(sex = as.factor(sex),
+         chest_pain_type = as.factor(chest_pain_type),
+         fasting_blood_sugar = as.factor(fasting_blood_sugar),
+         exercise_angina = as.factor(exercise_angina),
+         heart_disease = as.factor(heart_disease)) %>%
+  select(age, sex, chest_pain_type, resting_blood_pressure, serum_cholesterol, fasting_blood_sugar, max_hr_exe, exercise_angina, heart_disease)
+```
+
+
+
+```{r}
+# Exploratory Data Analysis: For non-heart patients & heart disease patients count v/s age
+non_patients <- data %>% filter(heart_disease == "Absence")
+heart_patients <- data %>% filter(heart_disease == "Presence")
+
+# For non-patients
+ggplot(non_patients, aes(x = age)) + 
+  geom_histogram(fill = "coral") +
+  labs(title = "Pervasiveness of Heart Disease in Different Age of Non-patients", x = "Age (years)", y = "Count")
+
+# For heart disease patients
+ggplot(heart_patients, aes(x = age)) + 
+  geom_histogram(fill = "deepskyblue3") +
+  labs(title = "Pervasiveness of Heart Disease in Different Age of Patients", x = "Age (years)", y = "Count")
+```
+
+```{r}
+# Exploratory Data Analysis: Relationship between type of chest pain and heart disease
+chest_pain_type_graph.plot <- ggplot(data, mapping = aes(x = heart_disease, fill = chest_pain_type)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Pervasiveness of Heart Disease for Different Types of Chest Pain",
+       x = "Heart Disease",
+       y = "Count",
+       fill = "Chest Pain Type") + 
+  scale_fill_manual(values = c("coral", "deepskyblue3", "coral", "deepskyblue3"))
+chest_pain_type_graph.plot
+```
+
+
+```{r}
+# Exploratory Data Analysis: Relationship between Heart Disease and 3-Predictors (i.e. Sex, Fasting Blood Sugar & Exercise Induced Angina)
+sex.plot <- ggplot(data, mapping = aes(x = sex, fill = heart_disease)) + geom_bar(position = "fill") +
+  labs(x = "Sex", y = "Proportion", fill = "Heart Disease") +
+  scale_fill_manual(values = c("coral", "deepskyblue3"))
+
+fasting_blood_sugar.plot <- ggplot(data, mapping = aes(x=fasting_blood_sugar, fill=heart_disease)) + geom_bar(position = "fill") +
+  labs(x = "Fasting Blood Sugar", y = "Proportion", fill = "Heart Disease") + 
+  scale_fill_manual(values = c("coral", "deepskyblue3")) +
+  scale_x_discrete(labels = c("low", "high"))
+
+exercise_angina.plot <- ggplot(data, mapping = aes(x = exercise_angina, fill = heart_disease)) +
+  geom_bar(position = "fill") +
+  labs(x = "Exercise Induced Angina", y = "Proportion", fill = "Heart Disease") +
+  scale_fill_manual(values = c("coral", "deepskyblue3"))
+
+grid.arrange(sex.plot, fasting_blood_sugar.plot, exercise_angina.plot, nrow=2)
+```
+
+
+```{r}
+# Exploratory Data Analysis: Relationship between Heart Disease and 3-Predictors (i.e. Resting Blood Pressure (mm Hg), Serum Cholesterol (mg/dl) & Maximum Heart Rate during exercise (beats per minute))
+resting_blood_pressure.plot <- ggplot(data, aes(x = resting_blood_pressure, y = heart_disease, fill = heart_disease)) +
+  geom_boxplot(color = "black") +
+  labs(x = "Resting Blood Pressure (mm Hg)", y = "Heart Disease", fill = "Heart Disease") +
+  scale_fill_manual(values = c("coral", "deepskyblue3"))
+
+serum_cholesterol.plot <- ggplot(data, aes(x = serum_cholesterol, y = heart_disease, fill = heart_disease)) +
+  geom_boxplot(color = "black") +
+  labs(x = "Serum Cholestoral (mg/dl)", y = "Heart Disease", fill = "Heart Disease") +
+  scale_fill_manual(values = c("coral", "deepskyblue3"))
+
+max_hr_exe.plot <- ggplot(data, aes(x = max_hr_exe, y = heart_disease, fill = heart_disease)) +
+  geom_boxplot(color = "black") +
+  labs(x = "Maximum Heart Rate (bpm)", y = "Heart Disease", fill = "Heart Disease") +
+  scale_fill_manual(values = c("coral", "deepskyblue3"))
+
+grid.arrange(resting_blood_pressure.plot, serum_cholesterol.plot, max_hr_exe.plot, nrow = 2)
+```
+
+```{r}
+# Data is spitted into train & split data for further analysis
+split_data <- sample.split(data, SplitRatio = 0.8)
+
+train_data <- subset(data, split_data == "TRUE")
+test_data <- subset(data, split_data == "FALSE")
+```
+
+
+```{r}
+# Performed Logistic Regression on train data with "glm" function of the "stats" package in R
+heart_all_Var <- glm(heart_disease~., data = train_data, family = "binomial")
+summary(heart_all_Var)
+```
+
+```{r}
+# Performed Logistic Regression on train data again after removing 3-predictors which were statistically non-significant
+
+heart_model <- logistic_reg() %>%
+  set_engine("glm")
+heart_process <- recipe(heart_disease ~ ., data = train_data) %>%
+  step_rm(serum_cholesterol, age, fasting_blood_sugar) %>%
+  step_naomit(all_predictors())
+heart_p <- workflow() %>%
+  add_model(heart_model) %>%
+  add_recipe(heart_process)
+
+# Fit training data after removing 3-predictors
+heart_model_fit <- heart_p %>%
+  fit(data = train_data)
+tidy(heart_model_fit)
+```
+
+
+```{r}
+# Receiver Operating Characteristic (ROC) plot
+train_data.pred = predict(heart_model_fit, new_data = train_data)
+
+traincomp <- data.frame(train_data$heart_disease, train_data.pred)
+colnames(traincomp) <- c("train.response", "train.prediction")
+traincomp <- traincomp %>%
+  mutate(train.response = factor(case_when(train.response == "Absence" ~ 0,
+                                    train.response == "Presence" ~ 1))) %>%
+  mutate(train.prediction = factor(case_when(train.prediction == "Absence" ~ 0,
+                                    train.prediction == "Presence" ~ 1)))
+
+heart_d.roc <- roc(response = ordered(traincomp$train.response), predictor = ordered(traincomp$train.prediction))
+
+plot(heart_d.roc, print.thres = "best", main = "Receiver Operating Characteristic (ROC) Technique Plot")
+
+# Area under the curve
+print(auc(heart_d.roc))
+```
+
+
+```{r}
+heart_disease_pred <- predict(heart_model_fit, new_data = test_data) %>%
+  bind_cols(test_data %>% select(heart_disease))
+
+test_accuracy <- accuracy(heart_disease_pred, truth = heart_disease, estimate = .pred_class)
+test_specificity <- spec(heart_disease_pred, truth = heart_disease, estimate = .pred_class)
+test_sensitivity <- sens(heart_disease_pred, truth = heart_disease, estimate = .pred_class)
+
+test.values <- data.frame(test_accuracy$.estimate, test_sensitivity$.estimate, test_specificity$.estimate)
+colnames(test.values) <- c("Test set Accuracy", "Test set Sensitivity", "Test set Specificity")
+test.values
+```
